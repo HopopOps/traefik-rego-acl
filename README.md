@@ -137,6 +137,13 @@ pinned in `test/go.mod`, since the builtin lists are checked against it.
 
 A removed middleware leaves its policy in the sidecar until it restarts.
 
+## Image
+
+`code.hopopops.com/kubernetes/traefik-rego-acl:<tag>` is a file tree, not a program: `/plugin`
+holds the plugin source and `/opa` the policy tree, so both come from the same tested commit.
+It is meant to be mounted as an image volume, `/plugin` into Traefik at
+`/plugins-local/src/code.hopopops.com/kubernetes/traefik-rego-acl` and `/opa` into the sidecar.
+
 ## Tests
 
 ```

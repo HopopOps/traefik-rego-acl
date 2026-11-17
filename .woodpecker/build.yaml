@@ -1,0 +1,77 @@
+---
+when:
+  - &on-tags
+    event:
+      - tag
+  - &on-main
+    event:
+      - manual
+      - push
+    branch: main
+
+variables:
+  - &build-configuration
+    provenance: true
+    sbom: true
+    sbomOutputPath: "./sbom-out"
+    labels:
+      - name: org.opencontainers.image.authors
+        value: "Vianney <vianney@hopopops.com>"
+      - name: org.opencontainers.image.vendor
+        value: HopopOps
+      - name: org.opencontainers.image.title
+        value: traefik-rego-acl
+      - name: org.opencontainers.image.description
+        value: Traefik middleware plugin authorizing requests with per-middleware Rego policies
+      - name: org.opencontainers.image.documentation
+        value: https://code.hopopops.com/kubernetes/traefik-rego-acl/
+
+steps:
+  - name: build:login
+    image: docker.io/library/busybox:latest
+    environment:
+      FORGE_USERNAME:
+        from_secret: forge-username
+      FORGE_PASSWORD:
+        from_secret: forge-password
+      DOCKER_CONFIG: ".docker"
+    commands:
+      - |
+        mkdir -p "$${DOCKER_CONFIG}"
+        cat <<EOF > "$${DOCKER_CONFIG}/config.json"
+        {
+          "auths": {
+            "code.hopopops.com": {
+              "auth": "$(echo -n "$${FORGE_USERNAME}:$${FORGE_PASSWORD}" | base64 -w 0)"
+            }
+          }
+        }
+        EOF
+
+  - name: build:package:branch
+    image: code.hopopops.com/woodpecker-plugins/buildkit-build:1.0.9
+    settings:
+      buildkit:
+        extraEnv:
+          - name: DOCKER_CONFIG
+            value: ".docker"
+      build:
+        !!merge <<: *build-configuration
+        destinations:
+          - code.hopopops.com/kubernetes/traefik-rego-acl:latest
+    when:
+      - *on-main
+
+  - name: build:package:release
+    image: code.hopopops.com/woodpecker-plugins/buildkit-build:1.0.9
+    settings:
+      buildkit:
+        extraEnv:
+          - name: DOCKER_CONFIG
+            value: ".docker"
+      build:
+        !!merge <<: *build-configuration
+        destinations:
+          - code.hopopops.com/kubernetes/traefik-rego-acl:${CI_COMMIT_TAG}
+    when:
+      - *on-tags

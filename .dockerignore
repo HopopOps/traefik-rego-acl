@@ -1,0 +1,5 @@
+**
+!.traefik.yml
+!go.mod
+!acl.go
+!opa
