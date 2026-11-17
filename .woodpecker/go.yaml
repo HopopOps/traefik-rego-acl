@@ -1,0 +1,21 @@
+---
+when:
+  - event:
+      - manual
+      - pull_request
+  - event:
+      - push
+    branch: main
+
+steps:
+  - name: go:test
+    image: docker.io/library/golang:1.27
+    environment:
+      GOPROXY: https://go.pkgs.cache.valhall.lan,direct
+      GOPRIVATE: code.hopopops.com
+      GOFLAGS: -buildvcs=false
+    commands:
+      - go vet . && go test -race .
+      # Separate module: OPA and Yaegi must stay out of the plugin's own go.mod, which Traefik
+      # expects to be vendored in full.
+      - cd test && go vet . && go test .
