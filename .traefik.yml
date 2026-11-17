@@ -1,0 +1,8 @@
+---
+displayName: Rego ACL
+type: middleware
+import: code.hopopops.com/kubernetes/traefik-rego-acl
+summary: Authorizes requests with a per-middleware Rego policy evaluated by an OPA sidecar
+testData:
+  policy: |
+    default allow := false
