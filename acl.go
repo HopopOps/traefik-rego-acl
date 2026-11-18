@@ -91,7 +91,9 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		opaURL:     strings.TrimRight(config.OPAURL, "/"),
 		denyStatus: config.DenyStatus,
 		timeout:    timeout,
-		client:     &http.Client{},
+		// The default transport keeps 2 idle connections per host: more concurrent requests
+		// than that would each dial OPA.
+		client: &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 256}},
 	}
 	for _, h := range config.Headers {
 		a.headers = append(a.headers, http.CanonicalHeaderKey(h))

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 
 	acl "code.hopopops.com/kubernetes/traefik-rego-acl"
@@ -79,6 +80,26 @@ func BenchmarkDecision(b *testing.B) {
 			resp.Body.Close()
 		}
 	})
+	// 32 clients at once, the shape that exhausts the transport's idle connections.
+	parallel := func(h http.Handler) func(*testing.B) {
+		return func(b *testing.B) {
+			b.SetParallelism(32 / runtime.GOMAXPROCS(0))
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					req := httptest.NewRequest("GET", "https://whoami.hopopops.com/acl", nil)
+					req.RemoteAddr = "192.168.1.2:4242"
+					rec := httptest.NewRecorder()
+					h.ServeHTTP(rec, req)
+					if rec.Code != 200 {
+						b.Errorf("status %d", rec.Code)
+						return
+					}
+				}
+			})
+		}
+	}
 	b.Run("compiled", serve(compiled))
 	b.Run("yaegi", serve(interpreted))
+	b.Run("compiled-parallel", parallel(compiled))
+	b.Run("yaegi-parallel", parallel(interpreted))
 }
