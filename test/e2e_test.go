@@ -1,11 +1,14 @@
 package test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -93,8 +96,8 @@ func opaBinary(t testing.TB) string {
 }
 
 // startOPA runs the server with the flags and the policy tree the sidecar gets.
-func startOPA(t testing.TB, bin, addr, conf string) *exec.Cmd {
-	args := []string{"run", "--server", "--addr", addr, "--log-level=error", conf}
+func startOPA(t testing.TB, bin, addr, conf string, extra ...string) *exec.Cmd {
+	args := append([]string{"run", "--server", "--addr", addr, "--log-level=error", conf}, extra...)
 	network, target := "unix", strings.TrimPrefix(addr, "unix://")
 	if target == addr {
 		// Over TCP anything in the pod reaches OPA: system.authz narrows the API.
@@ -256,6 +259,50 @@ func TestEndToEnd(t *testing.T) {
 	rec := httptest.NewRecorder()
 	late.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
 	expect("deferred push", rec.Code, 200)
+}
+
+// OPA's spans must land in the trace of the request the plugin is deciding on.
+func TestTracePropagation(t *testing.T) {
+	traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+	raw, _ := hex.DecodeString(traceID)
+	seen := make(chan struct{}, 1)
+	collector := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		var body io.Reader = r.Body
+		if r.Header.Get("Content-Encoding") == "gzip" {
+			body, _ = gzip.NewReader(r.Body)
+		}
+		if b, _ := io.ReadAll(body); bytes.Contains(b, raw) {
+			select {
+			case seen <- struct{}{}:
+			default:
+			}
+		}
+	}))
+	defer collector.Close()
+
+	l, _ := net.Listen("tcp", "127.0.0.1:0")
+	addr := l.Addr().String()
+	l.Close()
+	startOPA(t, opaBinary(t), addr, "../opa",
+		"--set", "distributed_tracing.type=http",
+		"--set", "distributed_tracing.address="+strings.TrimPrefix(collector.URL, "http://"),
+		"--set", "distributed_tracing.batch_span_processor_options.batch_timeout_ms=100")
+	h, err := plugin(t)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), "trace@file", "default allow := true", "http://"+addr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Traceparent", "00-"+traceID+"-00f067aa0ba902b7-01")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d", rec.Code)
+	}
+	select {
+	case <-seen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no span of the request's trace reached the collector")
+	}
 }
 
 func TestUnixSocket(t *testing.T) {
