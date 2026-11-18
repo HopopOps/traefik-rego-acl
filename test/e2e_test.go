@@ -94,15 +94,21 @@ func opaBinary(t testing.TB) string {
 
 // startOPA runs the server with the flags and the policy tree the sidecar gets.
 func startOPA(t testing.TB, bin, addr, conf string) *exec.Cmd {
-	cmd := exec.Command(bin, "run", "--server", "--addr", addr, "--authorization=basic", "--log-level=error", conf)
+	args := []string{"run", "--server", "--addr", addr, "--log-level=error", conf}
+	network, target := "unix", strings.TrimPrefix(addr, "unix://")
+	if target == addr {
+		// Over TCP anything in the pod reaches OPA: system.authz narrows the API.
+		network, args = "tcp", append(args, "--authorization=basic")
+	}
+	cmd := exec.Command(bin, args...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
 	for i := 0; i < 100; i++ {
-		if resp, err := http.Get("http://" + addr + "/health"); err == nil {
-			resp.Body.Close()
+		if c, err := net.Dial(network, target); err == nil {
+			c.Close()
 			return cmd
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -250,4 +256,22 @@ func TestEndToEnd(t *testing.T) {
 	rec := httptest.NewRecorder()
 	late.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
 	expect("deferred push", rec.Code, 200)
+}
+
+func TestUnixSocket(t *testing.T) {
+	addr := "unix://" + filepath.Join(t.TempDir(), "opa.sock")
+	startOPA(t, opaBinary(t), addr, "../opa")
+	h, err := plugin(t)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), "unix@file", policy, addr, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ip, want := range map[string]int{"10.43.16.5": 200, "203.0.113.9": 401} {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = ip + ":4242"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Errorf("%s: status %d, want %d", ip, rec.Code, want)
+		}
+	}
 }

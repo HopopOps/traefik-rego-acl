@@ -91,10 +91,17 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		opaURL:     strings.TrimRight(config.OPAURL, "/"),
 		denyStatus: config.DenyStatus,
 		timeout:    timeout,
-		// The default transport keeps 2 idle connections per host: more concurrent requests
-		// than that would each dial OPA.
-		client: &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 256}},
 	}
+	// The default transport keeps 2 idle connections per host: more concurrent requests
+	// than that would each dial OPA.
+	transport := &http.Transport{MaxIdleConnsPerHost: 256}
+	if socket, ok := strings.CutPrefix(a.opaURL, "unix://"); ok {
+		a.opaURL = "http://opa"
+		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		}
+	}
+	a.client = &http.Client{Transport: transport}
 	for _, h := range config.Headers {
 		a.headers = append(a.headers, http.CanonicalHeaderKey(h))
 	}

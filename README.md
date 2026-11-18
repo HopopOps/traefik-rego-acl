@@ -65,7 +65,7 @@ spec:
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `policy` | required | Rego source, without a `package` line |
-| `opaURL` | `http://127.0.0.1:8181` | OPA API |
+| `opaURL` | `http://127.0.0.1:8181` | OPA API, or `unix:///path/to/opa.sock` |
 | `headers` | none | Request headers copied into the input |
 | `trustedProxies` | none | CIDRs whose `X-Forwarded-For` entries are believed |
 | `denyStatus` | `403` | Status of a denial |
@@ -134,6 +134,16 @@ opa run --server --addr 127.0.0.1:8181 --authorization=basic /policies
 `opa/system/authz.rego` opens only what the plugin calls: `PUT /v1/policies/mw/<id>`,
 `POST /v1/data/mw/<id>`, the sandbox check and `GET /health`. The OPA version must be the one
 pinned in `test/go.mod`, since the builtin lists are checked against it.
+
+Over a Unix socket in a volume the two containers share, nothing Traefik proxies can reach
+OPA and `system.authz`, about 40% of a decision's round trip, is no longer needed. Both
+containers must run as the same user:
+
+```
+opa run --server --addr unix:///run/opa/opa.sock --unix-socket-perm 600 /policies
+```
+
+with `opaURL: unix:///run/opa/opa.sock` on each middleware.
 
 A removed middleware leaves its policy in the sidecar until it restarts.
 
