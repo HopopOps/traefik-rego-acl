@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"runtime"
 	"testing"
 
@@ -98,8 +99,16 @@ func BenchmarkDecision(b *testing.B) {
 			})
 		}
 	}
+	socket := "unix://" + filepath.Join(b.TempDir(), "opa.sock")
+	startOPA(b, opaBinary(b), socket, "../opa")
+	unix, err := plugin(b)(next, "bench@file", canary, socket, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
 	b.Run("compiled", serve(compiled))
 	b.Run("yaegi", serve(interpreted))
 	b.Run("compiled-parallel", parallel(compiled))
 	b.Run("yaegi-parallel", parallel(interpreted))
+	b.Run("yaegi-unix", serve(unix))
+	b.Run("yaegi-unix-parallel", parallel(unix))
 }
