@@ -45,7 +45,7 @@ reason := "token required" if not input.token
 type builder = func(next http.Handler, name, policy, opaURL string, trusted []string) (http.Handler, error)
 
 // plugin loads the middleware the way Traefik does: interpreted by Yaegi from a GOPATH.
-func plugin(t *testing.T) builder {
+func plugin(t testing.TB) builder {
 	gopath := t.TempDir()
 	dir := filepath.Join(gopath, "src/code.hopopops.com/kubernetes")
 	root, _ := filepath.Abs("..")
@@ -84,7 +84,7 @@ func build(next http.Handler, name, policy, opaURL string, trusted []string) (ht
 	return v.Interface().(builder)
 }
 
-func opaBinary(t *testing.T) string {
+func opaBinary(t testing.TB) string {
 	bin := filepath.Join(t.TempDir(), "opa")
 	if out, err := exec.Command("go", "build", "-o", bin, "github.com/open-policy-agent/opa").CombinedOutput(); err != nil {
 		t.Fatalf("build opa: %v\n%s", err, out)
@@ -93,7 +93,7 @@ func opaBinary(t *testing.T) string {
 }
 
 // startOPA runs the server with the flags and the policy tree the sidecar gets.
-func startOPA(t *testing.T, bin, addr, conf string) *exec.Cmd {
+func startOPA(t testing.TB, bin, addr, conf string) *exec.Cmd {
 	cmd := exec.Command(bin, "run", "--server", "--addr", addr, "--authorization=basic", "--log-level=error", conf)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
