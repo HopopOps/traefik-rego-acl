@@ -128,6 +128,12 @@ func (a *acl) log(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "rego-acl %s: %s\n", a.name, fmt.Sprintf(format, args...))
 }
 
+type traceKey struct{}
+
+// The W3C trace context of the incoming request, forwarded so that OPA's spans join the
+// caller's trace. Traefik's own span is out of reach of a plugin: it lives in the context.
+var traceHeaders = []string{"Traceparent", "Tracestate"}
+
 // call sends one request to OPA and returns the status and the body.
 func (a *acl) call(ctx context.Context, method, path, contentType string, body []byte) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, method, a.opaURL+path, bytes.NewReader(body))
@@ -135,6 +141,13 @@ func (a *acl) call(ctx context.Context, method, path, contentType string, body [
 		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", contentType)
+	if trace, ok := ctx.Value(traceKey{}).(http.Header); ok {
+		for _, h := range traceHeaders {
+			if v := trace.Get(h); v != "" {
+				req.Header.Set(h, v)
+			}
+		}
+	}
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return 0, nil, err
@@ -304,7 +317,7 @@ func (a *acl) input(req *http.Request) map[string]any {
 }
 
 func (a *acl) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	ctx, cancel := context.WithTimeout(req.Context(), a.timeout)
+	ctx, cancel := context.WithTimeout(context.WithValue(req.Context(), traceKey{}, req.Header), a.timeout)
 	res, err := a.decide(ctx, a.input(req))
 	cancel()
 	if err != nil {

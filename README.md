@@ -147,6 +147,24 @@ with `opaURL: unix:///run/opa/opa.sock` on each middleware.
 
 A removed middleware leaves its policy in the sidecar until it restarts.
 
+## Tracing
+
+Two sources, both OTLP, neither needing anything from the plugin's configuration:
+
+- Traefik wraps the plugin in a `Plugin` span carrying `traefik.middleware.name`, once the
+  entrypoint or the router has `observability.traceVerbosity: detailed`. Its duration is the
+  whole cost of the middleware, OPA round trip included.
+- OPA exports its own spans when started with a `distributed_tracing` configuration:
+
+  ```
+  opa run ... --set distributed_tracing.type=grpc --set distributed_tracing.address=<collector>:4317
+  ```
+
+The plugin forwards `traceparent` and `tracestate` to OPA, so OPA's spans join the trace of a
+caller that sent one. They cannot be attached to the trace Traefik starts itself: that span
+lives in the request context and Traefik writes it to the headers only when it proxies, after
+the middlewares. Without a caller trace, OPA's spans form a trace of their own.
+
 ## Image
 
 `code.hopopops.com/kubernetes/traefik-rego-acl:<tag>` is a file tree, not a program: `/plugin`
