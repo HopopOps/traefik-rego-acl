@@ -9,7 +9,7 @@ access rules that depend on the request: network, host, path, method, groups.
 ## How it works
 
 ```
-Middleware (policy) -> plugin --validate, push, query--> OPA sidecar (127.0.0.1:8181)
+Middleware (policy) -> plugin --validate, push, query--> OPA sidecar (Unix socket)
 ```
 
 - When Traefik builds the middleware, the plugin submits the policy to the sandbox check, then
@@ -121,8 +121,12 @@ caller or from unverified input: that would hand the network back to every polic
 One per Traefik pod, never a shared Service: the policy store is per process.
 
 ```
-opa run --server --addr 127.0.0.1:8181 --authorization=basic /policies
+opa run --server --addr unix:///run/opa/opa.sock --unix-socket-perm 600 --diagnostic-addr :8282 /policies
 ```
+
+The socket lives in a volume the two containers share, and both run as the same user: only
+Traefik can open it, and nothing Traefik proxies can reach OPA. Each middleware sets
+`opaURL: unix:///run/opa/opa.sock`. `/health` and `/metrics` are served on the diagnostic port.
 
 `/policies` holds the `opa/` tree of this repository plus the deployment's issuers, in
 `/policies/lib/config/data.json`:
@@ -131,19 +135,13 @@ opa run --server --addr 127.0.0.1:8181 --authorization=basic /policies
 {"issuers": {"https://accounts.example.com/realms/main": {"jwks_uri": "https://accounts.example.com/realms/main/protocol/openid-connect/certs"}}}
 ```
 
-`opa/system/authz.rego` opens only what the plugin calls: `PUT /v1/policies/mw/<id>`,
-`POST /v1/data/mw/<id>`, the sandbox check and `GET /health`. The OPA version must be the one
-pinned in `test/go.mod`, since the builtin lists are checked against it.
+The OPA version must be the one pinned in `test/go.mod`, since the builtin lists are checked
+against it.
 
-Over a Unix socket in a volume the two containers share, nothing Traefik proxies can reach
-OPA and `system.authz`, about 40% of a decision's round trip, is no longer needed. Both
-containers must run as the same user:
-
-```
-opa run --server --addr unix:///run/opa/opa.sock --unix-socket-perm 600 /policies
-```
-
-with `opaURL: unix:///run/opa/opa.sock` on each middleware.
+Over TCP (`--addr 127.0.0.1:8181`, the plugin's default `opaURL`) anything sharing the pod's
+loopback reaches OPA: add `--authorization=basic`. `opa/system/authz.rego` then opens only what
+the plugin calls: `PUT /v1/policies/mw/<id>`, `POST /v1/data/mw/<id>`, the sandbox check and
+`GET /health`. It costs 30 to 40% of a decision's round trip and closes `/metrics`.
 
 A removed middleware leaves its policy in the sidecar until it restarts.
 
