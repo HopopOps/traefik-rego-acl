@@ -44,6 +44,7 @@ metadata:
 spec:
   plugin:
     rego-acl:
+      opaURL: unix:///run/opa/opa.sock
       trustedProxies:
         - 10.43.12.10/32
       headers:
@@ -175,15 +176,94 @@ caller that sent one. They cannot be attached to the trace Traefik starts itself
 lives in the request context and Traefik writes it to the headers only when it proxies, after
 the middlewares. Without a caller trace, OPA's spans form a trace of their own.
 
-## Image
+## Deployment
 
-`quay.io/hopopops/traefik-rego-acl:<tag>` (also on `docker.io/hopopops`) is a file tree, not a program: `/plugin`
-holds the plugin source and `/opa` the policy tree, so both come from the same tested commit.
-It is meant to be mounted as an image volume, `/plugin` into Traefik at
-`/plugins-local/src/github.com/HopopOps/traefik-rego-acl` and `/opa` into the sidecar.
+`quay.io/hopopops/traefik-rego-acl:<tag>` (also on `docker.io/hopopops`) is a file tree, not a
+program: `/plugin` holds the plugin source and `/opa` the policy tree, so both come from the
+same tested commit. It is mounted as an image volume, which needs the `ImageVolume` feature in
+the cluster and a runtime that supports it.
 
-From the [plugin catalog](https://plugins.traefik.io) instead, Traefik fetches the plugin itself;
-the sidecar still needs `/opa` from the image of the same version:
+Values for the [Traefik Helm chart](https://github.com/traefik/traefik-helm-chart): the plugin
+is loaded from the image as a local plugin, OPA runs as a native sidecar (an init container
+with `restartPolicy: Always`, so it is up before Traefik builds the middlewares) and listens on
+a socket in a volume the two containers share.
+
+```yaml
+experimental:
+  localPlugins:
+    rego-acl:
+      type: localPath
+      moduleName: github.com/HopopOps/traefik-rego-acl
+      volumeName: rego-acl
+      mountPath: /plugins-local/src/github.com/HopopOps/traefik-rego-acl
+      subPath: plugin
+
+additionalVolumeMounts:
+  - name: opa-socket
+    mountPath: /run/opa
+
+deployment:
+  additionalVolumes:
+    - name: rego-acl
+      image:
+        reference: quay.io/hopopops/traefik-rego-acl:v0.4.0
+        pullPolicy: IfNotPresent
+    - name: opa-socket
+      emptyDir: {}
+  initContainers:
+    - name: opa
+      # The version pinned in test/go.mod: the builtin allowlist is checked against it.
+      image: docker.io/openpolicyagent/opa:1.22.4-static
+      restartPolicy: Always
+      args:
+        - run
+        - --server
+        - --addr=unix:///run/opa/opa.sock
+        - --unix-socket-perm=600
+        - --diagnostic-addr=:8282
+        - --log-format=json
+        - --log-level=error
+        - /policies
+      ports:
+        - name: opa-diag
+          containerPort: 8282
+      startupProbe:
+        httpGet:
+          path: /health
+          port: opa-diag
+        periodSeconds: 1
+        failureThreshold: 30
+      livenessProbe:
+        httpGet:
+          path: /health
+          port: opa-diag
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+      volumeMounts:
+        - name: rego-acl
+          mountPath: /policies
+          subPath: opa
+          readOnly: true
+        - name: opa-socket
+          mountPath: /run/opa
+```
+
+Both containers run as the chart's default user (65532), which `--unix-socket-perm=600`
+relies on. Every middleware then sets `opaURL: unix:///run/opa/opa.sock`. If a `jwksURI` is
+served under a private CA, mount its bundle into the `opa` container too.
+
+From the [plugin catalog](https://plugins.traefik.io) instead, replace `experimental.localPlugins`
+with the block below; the image volume stays, for the sidecar's `/opa`, at the same version:
 
 ```yaml
 experimental:
