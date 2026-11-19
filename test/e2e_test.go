@@ -50,7 +50,7 @@ type builder = func(next http.Handler, name, policy, opaURL string, trusted []st
 // plugin loads the middleware the way Traefik does: interpreted by Yaegi from a GOPATH.
 func plugin(t testing.TB) builder {
 	gopath := t.TempDir()
-	dir := filepath.Join(gopath, "src/code.hopopops.com/kubernetes")
+	dir := filepath.Join(gopath, "src/github.com/HopopOps")
 	root, _ := filepath.Abs("..")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ import (
 	"context"
 	"net/http"
 
-	acl "code.hopopops.com/kubernetes/traefik-rego-acl"
+	acl "github.com/HopopOps/traefik-rego-acl"
 )
 
 func build(next http.Handler, name, policy, opaURL string, trusted []string, issuers map[string]string) (http.Handler, error) {

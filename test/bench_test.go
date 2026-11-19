@@ -12,7 +12,7 @@ import (
 	"runtime"
 	"testing"
 
-	acl "code.hopopops.com/kubernetes/traefik-rego-acl"
+	acl "github.com/HopopOps/traefik-rego-acl"
 )
 
 // The policy of the whoami canary on eored.

@@ -1,4 +1,4 @@
-module code.hopopops.com/kubernetes/traefik-rego-acl/test
+module github.com/HopopOps/traefik-rego-acl/test
 
 go 1.26.0
 
@@ -8,7 +8,7 @@ require (
 )
 
 require (
-	code.hopopops.com/kubernetes/traefik-rego-acl v0.0.0
+	github.com/HopopOps/traefik-rego-acl v0.0.0
 	github.com/agnivade/levenshtein v1.2.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
@@ -35,4 +35,4 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 )
 
-replace code.hopopops.com/kubernetes/traefik-rego-acl => ../
+replace github.com/HopopOps/traefik-rego-acl => ../

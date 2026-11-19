@@ -1,5 +1,8 @@
 # traefik-rego-acl
 
+> Canonical repository: [code.hopopops.com/kubernetes/traefik-rego-acl](https://code.hopopops.com/kubernetes/traefik-rego-acl).
+> The GitHub repository is a read-only mirror; issues and pull requests opened there are not watched.
+
 A Traefik middleware plugin that authorizes requests with a Rego policy. The policy lives in
 the middleware itself; an OPA sidecar next to Traefik evaluates it.
 
@@ -174,10 +177,21 @@ the middlewares. Without a caller trace, OPA's spans form a trace of their own.
 
 ## Image
 
-`code.hopopops.com/kubernetes/traefik-rego-acl:<tag>` is a file tree, not a program: `/plugin`
+`quay.io/hopopops/traefik-rego-acl:<tag>` (also on `docker.io/hopopops`) is a file tree, not a program: `/plugin`
 holds the plugin source and `/opa` the policy tree, so both come from the same tested commit.
 It is meant to be mounted as an image volume, `/plugin` into Traefik at
-`/plugins-local/src/code.hopopops.com/kubernetes/traefik-rego-acl` and `/opa` into the sidecar.
+`/plugins-local/src/github.com/HopopOps/traefik-rego-acl` and `/opa` into the sidecar.
+
+From the [plugin catalog](https://plugins.traefik.io) instead, Traefik fetches the plugin itself;
+the sidecar still needs `/opa` from the image of the same version:
+
+```yaml
+experimental:
+  plugins:
+    rego-acl:
+      moduleName: github.com/HopopOps/traefik-rego-acl
+      version: v0.4.0
+```
 
 ## Tests
 
@@ -187,3 +201,9 @@ go test .                 # plugin unit tests
 ```
 
 `test/` is a module of its own so that OPA and Yaegi stay out of the plugin's `go.mod`.
+
+## License
+
+Copyright 2026 HopopOps.
+
+Licensed under the Apache License, Version 2.0, see [LICENSE](LICENSE).
