@@ -90,6 +90,25 @@ spec:
 | `input.middleware` | Middleware name |
 | `input.issuers` | The `issuers` of the middleware, issuer to JWKS URL; absent without any |
 
+### Client address
+
+A plugin sees the request and nothing else: Traefik keeps no client address of its own that
+it could read. `client_ip` is therefore derived the way Traefik's entrypoints do it:
+`X-Forwarded-For` is read only when the TCP peer is in `trustedProxies`, walking from the
+right and stopping at the first address that is not. Entries a client prepends sit left of
+the one its first trusted proxy appended and are never reached.
+
+- Set `trustedProxies` to the entrypoint's `forwardedHeaders.trustedIPs`, and to nothing on
+  an entrypoint that clients reach directly. The entrypoint strips `X-Forwarded-For` from an
+  untrusted peer anyway; the plugin's own list guards against an entrypoint left on
+  `forwardedHeaders.insecure`.
+- Never base a decision on `X-Forwarded-For` or `X-Real-Ip` copied through `headers`: from a
+  trusted peer, Traefik passes `X-Real-Ip` through as that proxy sent it.
+- To drop headers altogether, put PROXY protocol between the front proxy and Traefik
+  (`entryPoints.<name>.proxyProtocol.trustedIPs`): Traefik then rewrites the peer address
+  itself and `trustedProxies` stays empty. The front proxy has to pass TCP through rather
+  than terminate HTTP.
+
 ### Decision
 
 | Rule | Type | Effect |
