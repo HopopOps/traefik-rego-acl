@@ -42,7 +42,7 @@ func BenchmarkDecision(b *testing.B) {
 	startOPA(b, opaBinary(b), addr, "../opa")
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 
-	interpreted, err := plugin(b)(next, "bench@file", canary, "http://"+addr, nil)
+	interpreted, err := plugin(b)(next, "bench@file", canary, "http://"+addr, nil, nil)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func BenchmarkDecision(b *testing.B) {
 	}
 	socket := "unix://" + filepath.Join(b.TempDir(), "opa.sock")
 	startOPA(b, opaBinary(b), socket, "../opa")
-	unix, err := plugin(b)(next, "bench@file", canary, socket, nil)
+	unix, err := plugin(b)(next, "bench@file", canary, socket, nil, nil)
 	if err != nil {
 		b.Fatal(err)
 	}

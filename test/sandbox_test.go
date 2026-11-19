@@ -76,6 +76,8 @@ func TestSandbox(t *testing.T) {
 		{"dynamic mw", `allow if { some k; data.mw[k].allow }`, false},
 		{"walk data", `allow if walk(data, _)`, false},
 		{"system", `allow if data.system.sandbox`, false},
+		{"with builtin", `allow if count({"method": "GET", "url": "http://x"}) with count as http.send`, false},
+		{"with input", `allow if input.x with input as {"x": true}`, false},
 		{"with other", "allow if data.mw.x.helper with data.mw.y.z as 1\nhelper if true", false},
 		{"http.send", `allow if http.send({"method": "get", "url": "http://x"}).status_code == 200`, false},
 		{"http.send nested", `allow if count(http.send({"method": "get", "url": "http://x"}).body) > 0`, false},

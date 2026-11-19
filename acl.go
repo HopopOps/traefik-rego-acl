@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -31,6 +32,14 @@ type Config struct {
 	TrustedProxies []string `json:"trustedProxies,omitempty"`
 	DenyStatus     int      `json:"denyStatus,omitempty"`
 	Timeout        string   `json:"timeout,omitempty"`
+	// Issuers are the token issuers data.lib.jwt.claims accepts for this middleware.
+	Issuers []Issuer `json:"issuers,omitempty"`
+}
+
+// Issuer is a token issuer and the URL of its signing keys.
+type Issuer struct {
+	Issuer  string `json:"issuer,omitempty"`
+	JWKSURI string `json:"jwksURI,omitempty"`
 }
 
 // CreateConfig returns the defaults.
@@ -50,6 +59,7 @@ type acl struct {
 	opaURL     string
 	headers    []string
 	trusted    []*net.IPNet
+	issuers    map[string]string
 	denyStatus int
 	timeout    time.Duration
 	client     *http.Client
@@ -111,6 +121,19 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 			return nil, fmt.Errorf("trustedProxies: %w", err)
 		}
 		a.trusted = append(a.trusted, n)
+	}
+	for _, i := range config.Issuers {
+		u, err := url.Parse(i.JWKSURI)
+		if i.Issuer == "" || err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return nil, fmt.Errorf("issuers: %q needs an issuer and an http(s) jwksURI", i.Issuer)
+		}
+		if _, dup := a.issuers[i.Issuer]; dup {
+			return nil, fmt.Errorf("issuers: %q listed twice", i.Issuer)
+		}
+		if a.issuers == nil {
+			a.issuers = map[string]string{}
+		}
+		a.issuers[i.Issuer] = i.JWKSURI
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -312,6 +335,9 @@ func (a *acl) input(req *http.Request) map[string]any {
 	}
 	if auth := req.Header.Get("Authorization"); len(auth) > 7 && strings.EqualFold(auth[:7], "Bearer ") {
 		in["token"] = auth[7:]
+	}
+	if a.issuers != nil {
+		in["issuers"] = a.issuers
 	}
 	return in
 }

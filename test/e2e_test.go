@@ -45,7 +45,7 @@ status := 401 if not input.token
 reason := "token required" if not input.token
 `
 
-type builder = func(next http.Handler, name, policy, opaURL string, trusted []string) (http.Handler, error)
+type builder = func(next http.Handler, name, policy, opaURL string, trusted []string, issuers map[string]string) (http.Handler, error)
 
 // plugin loads the middleware the way Traefik does: interpreted by Yaegi from a GOPATH.
 func plugin(t testing.TB) builder {
@@ -70,11 +70,14 @@ import (
 	acl "code.hopopops.com/kubernetes/traefik-rego-acl"
 )
 
-func build(next http.Handler, name, policy, opaURL string, trusted []string) (http.Handler, error) {
+func build(next http.Handler, name, policy, opaURL string, trusted []string, issuers map[string]string) (http.Handler, error) {
 	c := acl.CreateConfig()
 	c.Policy = policy
 	c.OPAURL = opaURL
 	c.TrustedProxies = trusted
+	for iss, jwks := range issuers {
+		c.Issuers = append(c.Issuers, acl.Issuer{Issuer: iss, JWKSURI: jwks})
+	}
 	return acl.New(context.Background(), next, c, name)
 }
 `); err != nil {
@@ -142,28 +145,17 @@ func TestEndToEnd(t *testing.T) {
 	}))
 	defer idp.Close()
 
-	// The sidecar's tree: the shipped policies plus the deployment's issuer list.
-	conf := t.TempDir()
-	if err := os.CopyFS(conf, os.DirFS("../opa")); err != nil {
-		t.Fatal(err)
-	}
-	os.MkdirAll(filepath.Join(conf, "lib/config"), 0o755)
-	issuers, _ := json.Marshal(map[string]any{"issuers": map[string]any{idp.URL: map[string]string{"jwks_uri": idp.URL}}})
-	if err := os.WriteFile(filepath.Join(conf, "lib/config/data.json"), issuers, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
 	l, _ := net.Listen("tcp", "127.0.0.1:0")
 	addr := l.Addr().String()
 	l.Close()
 	bin := opaBinary(t)
-	opa := startOPA(t, bin, addr, conf)
+	opa := startOPA(t, bin, addr, "../opa")
 	build := plugin(t)
 
 	var user string
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { user = r.Header.Get("X-User") })
 	trusted := []string{"127.0.0.0/8"}
-	h, err := build(next, "default-acl@kubernetescrd", policy, "http://"+addr, trusted)
+	h, err := build(next, "default-acl@kubernetescrd", policy, "http://"+addr, trusted, map[string]string{idp.URL: idp.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,14 +208,28 @@ func TestEndToEnd(t *testing.T) {
 	status, _ = do("POST", "198.51.100.9", token(t, other, claims("whoami", "admins")))
 	expect("token signed by another key", status, 403)
 
-	if _, err := build(next, "escape@file", "allow if data.mw.p_default_acl_kubernetescrd.allow", "http://"+addr, nil); err == nil {
+	if _, err := build(next, "escape@file", "allow if data.mw.p_default_acl_kubernetescrd.allow", "http://"+addr, nil, nil); err == nil {
 		t.Error("policy reading another middleware was accepted")
 	}
-	if _, err := build(next, "net@file", `allow if http.send({"method": "GET", "url": "http://x"})`, "http://"+addr, nil); err == nil {
+	if _, err := build(next, "net@file", `allow if http.send({"method": "GET", "url": "http://x"})`, "http://"+addr, nil, nil); err == nil {
 		t.Error("policy calling http.send was accepted")
 	}
-	if _, err := build(next, "broken@file", "allow if {", "http://"+addr, nil); err == nil {
+	if _, err := build(next, "broken@file", "allow if {", "http://"+addr, nil, nil); err == nil {
 		t.Error("policy with a syntax error was accepted")
+	}
+
+	// Issuers are per middleware: a valid token means nothing to one that does not list its issuer.
+	stranger, err := build(next, "stranger@file", `allow if data.lib.jwt.claims(input.token, "whoami")`, "http://"+addr, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token(t, key, claims("whoami", "admins")))
+	rec := httptest.NewRecorder()
+	stranger.ServeHTTP(rec, req)
+	expect("token from an issuer the middleware does not list", rec.Code, 403)
+	if _, err := build(next, "bad@file", "allow if true", "http://"+addr, nil, map[string]string{"x": "file:///etc/passwd"}); err == nil {
+		t.Error("issuer with a file jwksURI was accepted")
 	}
 
 	// Only the plugin's three paths are open on the API.
@@ -247,16 +253,16 @@ func TestEndToEnd(t *testing.T) {
 	opa.Wait()
 	status, _ = do("GET", "10.43.16.5", "")
 	expect("OPA down", status, 500)
-	late, err := build(next, "late@file", "allow if true", "http://"+addr, nil)
+	late, err := build(next, "late@file", "allow if true", "http://"+addr, nil, nil)
 	if err != nil {
 		t.Fatalf("middleware created while OPA is down: %v", err)
 	}
 
 	// OPA back with an empty store: both push their policy again on the next request.
-	startOPA(t, bin, addr, conf)
+	startOPA(t, bin, addr, "../opa")
 	status, _ = do("GET", "10.43.16.5", "")
 	expect("after an OPA restart", status, 200)
-	rec := httptest.NewRecorder()
+	rec = httptest.NewRecorder()
 	late.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
 	expect("deferred push", rec.Code, 200)
 }
@@ -287,7 +293,7 @@ func TestTracePropagation(t *testing.T) {
 		"--set", "distributed_tracing.type=http",
 		"--set", "distributed_tracing.address="+strings.TrimPrefix(collector.URL, "http://"),
 		"--set", "distributed_tracing.batch_span_processor_options.batch_timeout_ms=100")
-	h, err := plugin(t)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), "trace@file", "default allow := true", "http://"+addr, nil)
+	h, err := plugin(t)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), "trace@file", "default allow := true", "http://"+addr, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +314,7 @@ func TestTracePropagation(t *testing.T) {
 func TestUnixSocket(t *testing.T) {
 	addr := "unix://" + filepath.Join(t.TempDir(), "opa.sock")
 	startOPA(t, opaBinary(t), addr, "../opa")
-	h, err := plugin(t)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), "unix@file", policy, addr, nil)
+	h, err := plugin(t)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), "unix@file", policy, addr, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

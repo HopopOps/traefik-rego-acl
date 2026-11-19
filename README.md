@@ -45,6 +45,9 @@ spec:
         - 10.43.12.10/32
       headers:
         - X-Forwarded-Proto
+      issuers:
+        - issuer: https://accounts.example.com/realms/main
+          jwksURI: https://accounts.example.com/realms/main/protocol/openid-connect/certs
       policy: |
         default allow := false
 
@@ -68,6 +71,7 @@ spec:
 | `opaURL` | `http://127.0.0.1:8181` | OPA API, or `unix:///path/to/opa.sock` |
 | `headers` | none | Request headers copied into the input |
 | `trustedProxies` | none | CIDRs whose `X-Forwarded-For` entries are believed |
+| `issuers` | none | `issuer` and `jwksURI` of each token issuer `data.lib.jwt.claims` accepts |
 | `denyStatus` | `403` | Status of a denial |
 | `timeout` | `1s` | Budget for the OPA calls of one request |
 
@@ -81,6 +85,7 @@ spec:
 | `input.request.client_ip` | Peer address, or the rightmost `X-Forwarded-For` entry that is not a trusted proxy |
 | `input.token` | Bearer token of `Authorization`, unverified; absent without one |
 | `input.middleware` | Middleware name |
+| `input.issuers` | The `issuers` of the middleware, issuer to JWKS URL; absent without any |
 
 ### Decision
 
@@ -97,6 +102,7 @@ A policy is checked by `opa/system/sandbox.rego` before it is loaded, and refuse
 
 - references `data` outside its own package and `data.lib` (other middlewares, `data.system`,
   a bare or dynamic `data` reference);
+- uses `with`, which can substitute any function, a denied builtin included, for an allowed one;
 - calls a builtin that is not in `allowed_builtins` (`opa/system/builtins.rego`). Network,
   runtime introspection, logging and key handling builtins are denied.
 
@@ -110,11 +116,18 @@ middleware of that Traefik pod. `timeout` caps what a request waits.
 
 `data.lib` is trusted code, loaded from files, callable by every policy:
 
-- `data.lib.jwt.claims(token, aud)`: the payload of a token signed by an issuer listed in
-  `data.lib.config.issuers` and issued for `aud`. Undefined otherwise.
+- `data.lib.jwt.claims(token, aud)`: the payload of a token signed by an issuer listed in the
+  middleware's `issuers` and issued for `aud`. Undefined otherwise. The JWKS is fetched on the
+  first token of an issuer and cached for an hour, keyed by URL.
 
 `lib` may use denied builtins. A `lib` function must never take a URL or a host from its
 caller or from unverified input: that would hand the network back to every policy.
+
+A `jwksURI` is fetched by the sidecar from inside the Traefik pod. Whoever can write a
+Middleware can therefore make it issue GET requests to any address that pod reaches, response
+unseen. Limit the pod's egress with a NetworkPolicy to the backends Traefik routes to and the
+identity providers' addresses. The sidecar shares the pod's network namespace, so the policy
+cannot tell OPA's traffic from Traefik's: what Traefik must reach, OPA can reach too.
 
 ## OPA sidecar
 
@@ -128,12 +141,8 @@ The socket lives in a volume the two containers share, and both run as the same 
 Traefik can open it, and nothing Traefik proxies can reach OPA. Each middleware sets
 `opaURL: unix:///run/opa/opa.sock`. `/health` and `/metrics` are served on the diagnostic port.
 
-`/policies` holds the `opa/` tree of this repository plus the deployment's issuers, in
-`/policies/lib/config/data.json`:
-
-```json
-{"issuers": {"https://accounts.example.com/realms/main": {"jwks_uri": "https://accounts.example.com/realms/main/protocol/openid-connect/certs"}}}
-```
+`/policies` holds the `opa/` tree of this repository, nothing else. OPA must trust the CA of
+every `jwksURI`.
 
 The OPA version must be the one pinned in `test/go.mod`, since the builtin lists are checked
 against it.
