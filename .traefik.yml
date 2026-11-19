@@ -1,8 +1,8 @@
 ---
-displayName: Rego ACL
+displayName: OPA ACL with inline Rego
 type: middleware
 import: github.com/HopopOps/traefik-rego-acl
-summary: Authorizes requests with a per-middleware Rego policy evaluated by an OPA sidecar
+summary: Authorization policies written entirely in Rego inside the Middleware, evaluated by an OPA sidecar; no policy files or bundles to ship
 testData:
   policy: |
     default allow := false
