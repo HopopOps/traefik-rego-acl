@@ -98,22 +98,20 @@ func opaBinary(t testing.TB) string {
 	return bin
 }
 
+func socket(t testing.TB) string {
+	return "unix://" + filepath.Join(t.TempDir(), "opa.sock")
+}
+
 // startOPA runs the server with the flags and the policy tree the sidecar gets.
 func startOPA(t testing.TB, bin, addr, conf string, extra ...string) *exec.Cmd {
-	args := append([]string{"run", "--server", "--addr", addr, "--log-level=error", conf}, extra...)
-	network, target := "unix", strings.TrimPrefix(addr, "unix://")
-	if target == addr {
-		// Over TCP anything in the pod reaches OPA: system.authz narrows the API.
-		network, args = "tcp", append(args, "--authorization=basic")
-	}
-	cmd := exec.Command(bin, args...)
+	cmd := exec.Command(bin, append([]string{"run", "--server", "--addr", addr, "--log-level=error", conf}, extra...)...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
-	for i := 0; i < 100; i++ {
-		if c, err := net.Dial(network, target); err == nil {
+	for range 100 {
+		if c, err := net.Dial("unix", strings.TrimPrefix(addr, "unix://")); err == nil {
 			c.Close()
 			return cmd
 		}
@@ -145,9 +143,7 @@ func TestEndToEnd(t *testing.T) {
 	}))
 	defer idp.Close()
 
-	l, _ := net.Listen("tcp", "127.0.0.1:0")
-	addr := l.Addr().String()
-	l.Close()
+	addr := socket(t)
 	bin := opaBinary(t)
 	opa := startOPA(t, bin, addr, "../opa")
 	build := plugin(t)
@@ -155,7 +151,7 @@ func TestEndToEnd(t *testing.T) {
 	var user string
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { user = r.Header.Get("X-User") })
 	trusted := []string{"127.0.0.0/8"}
-	h, err := build(next, "default-acl@kubernetescrd", policy, "http://"+addr, trusted, map[string]string{idp.URL: idp.URL})
+	h, err := build(next, "default-acl@kubernetescrd", policy, addr, trusted, map[string]string{idp.URL: idp.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,18 +204,18 @@ func TestEndToEnd(t *testing.T) {
 	status, _ = do("POST", "198.51.100.9", token(t, other, claims("whoami", "admins")))
 	expect("token signed by another key", status, 403)
 
-	if _, err := build(next, "escape@file", "allow if data.mw.p_default_acl_kubernetescrd.allow", "http://"+addr, nil, nil); err == nil {
+	if _, err := build(next, "escape@file", "allow if data.mw.p_default_acl_kubernetescrd.allow", addr, nil, nil); err == nil {
 		t.Error("policy reading another middleware was accepted")
 	}
-	if _, err := build(next, "net@file", `allow if http.send({"method": "GET", "url": "http://x"})`, "http://"+addr, nil, nil); err == nil {
+	if _, err := build(next, "net@file", `allow if http.send({"method": "GET", "url": "http://x"})`, addr, nil, nil); err == nil {
 		t.Error("policy calling http.send was accepted")
 	}
-	if _, err := build(next, "broken@file", "allow if {", "http://"+addr, nil, nil); err == nil {
+	if _, err := build(next, "broken@file", "allow if {", addr, nil, nil); err == nil {
 		t.Error("policy with a syntax error was accepted")
 	}
 
 	// Issuers are per middleware: a valid token means nothing to one that does not list its issuer.
-	stranger, err := build(next, "stranger@file", `allow if data.lib.jwt.claims(input.token, "whoami")`, "http://"+addr, nil, nil)
+	stranger, err := build(next, "stranger@file", `allow if data.lib.jwt.claims(input.token, "whoami")`, addr, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,24 +224,12 @@ func TestEndToEnd(t *testing.T) {
 	rec := httptest.NewRecorder()
 	stranger.ServeHTTP(rec, req)
 	expect("token from an issuer the middleware does not list", rec.Code, 403)
-	if _, err := build(next, "bad@file", "allow if true", "http://"+addr, nil, map[string]string{"x": "file:///etc/passwd"}); err == nil {
+	if _, err := build(next, "bad@file", "allow if true", addr, nil, map[string]string{"x": "file:///etc/passwd"}); err == nil {
 		t.Error("issuer with a file jwksURI was accepted")
 	}
 
-	// Only the plugin's three paths are open on the API.
-	for _, c := range []struct{ method, path string }{
-		{"PUT", "/v1/policies/system/authz"}, {"PUT", "/v1/policies/lib/x"}, {"GET", "/v1/policies"},
-		{"GET", "/v1/data"}, {"POST", "/v1/data/lib/jwt"}, {"DELETE", "/v1/policies/mw/x"}, {"PUT", "/v1/data/mw/x"},
-	} {
-		req, _ := http.NewRequest(c.method, "http://"+addr+c.path, strings.NewReader("{}"))
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusUnauthorized {
-			t.Errorf("%s %s: status %d, want 401", c.method, c.path, resp.StatusCode)
-		}
+	if _, err := build(next, "tcp@file", "allow if true", "http://127.0.0.1:8181", nil, nil); err == nil {
+		t.Error("TCP opaURL was accepted")
 	}
 
 	// OPA down: fail closed, and a middleware created meanwhile is not an error.
@@ -253,7 +237,7 @@ func TestEndToEnd(t *testing.T) {
 	opa.Wait()
 	status, _ = do("GET", "10.43.16.5", "")
 	expect("OPA down", status, 500)
-	late, err := build(next, "late@file", "allow if true", "http://"+addr, nil, nil)
+	late, err := build(next, "late@file", "allow if true", addr, nil, nil)
 	if err != nil {
 		t.Fatalf("middleware created while OPA is down: %v", err)
 	}
@@ -286,14 +270,12 @@ func TestTracePropagation(t *testing.T) {
 	}))
 	defer collector.Close()
 
-	l, _ := net.Listen("tcp", "127.0.0.1:0")
-	addr := l.Addr().String()
-	l.Close()
+	addr := socket(t)
 	startOPA(t, opaBinary(t), addr, "../opa",
 		"--set", "distributed_tracing.type=http",
 		"--set", "distributed_tracing.address="+strings.TrimPrefix(collector.URL, "http://"),
 		"--set", "distributed_tracing.batch_span_processor_options.batch_timeout_ms=100")
-	h, err := plugin(t)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), "trace@file", "default allow := true", "http://"+addr, nil, nil)
+	h, err := plugin(t)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), "trace@file", "default allow := true", addr, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,23 +290,5 @@ func TestTracePropagation(t *testing.T) {
 	case <-seen:
 	case <-time.After(5 * time.Second):
 		t.Fatal("no span of the request's trace reached the collector")
-	}
-}
-
-func TestUnixSocket(t *testing.T) {
-	addr := "unix://" + filepath.Join(t.TempDir(), "opa.sock")
-	startOPA(t, opaBinary(t), addr, "../opa")
-	h, err := plugin(t)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), "unix@file", policy, addr, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for ip, want := range map[string]int{"10.43.16.5": 200, "203.0.113.9": 401} {
-		req := httptest.NewRequest("GET", "/", nil)
-		req.RemoteAddr = ip + ":4242"
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != want {
-			t.Errorf("%s: status %d, want %d", ip, rec.Code, want)
-		}
 	}
 }

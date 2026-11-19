@@ -1,6 +1,6 @@
 package system.sandbox
 
-# Every builtin of the pinned OPA is in exactly one of these sets; main_test.go enforces it.
+# Every builtin of the pinned OPA is in exactly one of these sets; test/sandbox_test.go enforces it.
 
 allowed_builtins := {
 	"abs",

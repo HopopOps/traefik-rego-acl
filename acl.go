@@ -25,6 +25,7 @@ import (
 type Config struct {
 	// Policy is the Rego source, without a package line.
 	Policy string `json:"policy,omitempty"`
+	// OPAURL is the unix:// socket of the OPA sidecar.
 	OPAURL string `json:"opaURL,omitempty"`
 	// Headers lists the request headers copied into input.request.headers.
 	Headers []string `json:"headers,omitempty"`
@@ -45,7 +46,7 @@ type Issuer struct {
 // CreateConfig returns the defaults.
 func CreateConfig() *Config {
 	return &Config{
-		OPAURL:     "http://127.0.0.1:8181",
+		OPAURL:     "unix:///run/opa/opa.sock",
 		DenyStatus: http.StatusForbidden,
 		Timeout:    "1s",
 	}
@@ -56,7 +57,6 @@ type acl struct {
 	name       string
 	id         string
 	policy     string
-	opaURL     string
 	headers    []string
 	trusted    []*net.IPNet
 	issuers    map[string]string
@@ -93,25 +93,27 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	if config.DenyStatus < 400 || config.DenyStatus > 599 {
 		return nil, fmt.Errorf("denyStatus %d is not a 4xx or 5xx", config.DenyStatus)
 	}
+	socket, ok := strings.CutPrefix(config.OPAURL, "unix://")
+	if !ok || socket == "" {
+		return nil, fmt.Errorf("opaURL %q is not a unix:// socket", config.OPAURL)
+	}
 	a := &acl{
 		next:       next,
 		name:       name,
 		id:         policyID(name),
 		policy:     config.Policy,
-		opaURL:     strings.TrimRight(config.OPAURL, "/"),
+		issuers:    map[string]string{},
 		denyStatus: config.DenyStatus,
 		timeout:    timeout,
+		// The default transport keeps 2 idle connections per host: more concurrent requests
+		// than that would each dial OPA.
+		client: &http.Client{Transport: &http.Transport{
+			MaxIdleConnsPerHost: 256,
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+			},
+		}},
 	}
-	// The default transport keeps 2 idle connections per host: more concurrent requests
-	// than that would each dial OPA.
-	transport := &http.Transport{MaxIdleConnsPerHost: 256}
-	if socket, ok := strings.CutPrefix(a.opaURL, "unix://"); ok {
-		a.opaURL = "http://opa"
-		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
-		}
-	}
-	a.client = &http.Client{Transport: transport}
 	for _, h := range config.Headers {
 		a.headers = append(a.headers, http.CanonicalHeaderKey(h))
 	}
@@ -129,9 +131,6 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		}
 		if _, dup := a.issuers[i.Issuer]; dup {
 			return nil, fmt.Errorf("issuers: %q listed twice", i.Issuer)
-		}
-		if a.issuers == nil {
-			a.issuers = map[string]string{}
 		}
 		a.issuers[i.Issuer] = i.JWKSURI
 	}
@@ -159,7 +158,7 @@ var traceHeaders = []string{"Traceparent", "Tracestate"}
 
 // call sends one request to OPA and returns the status and the body.
 func (a *acl) call(ctx context.Context, method, path, contentType string, body []byte) (int, []byte, error) {
-	req, err := http.NewRequestWithContext(ctx, method, a.opaURL+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, "http://opa"+path, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, err
 	}
@@ -336,7 +335,7 @@ func (a *acl) input(req *http.Request) map[string]any {
 	if auth := req.Header.Get("Authorization"); len(auth) > 7 && strings.EqualFold(auth[:7], "Bearer ") {
 		in["token"] = auth[7:]
 	}
-	if a.issuers != nil {
+	if len(a.issuers) > 0 {
 		in["issuers"] = a.issuers
 	}
 	return in

@@ -44,7 +44,6 @@ metadata:
 spec:
   plugin:
     rego-acl:
-      opaURL: unix:///run/opa/opa.sock
       trustedProxies:
         - 10.43.12.10/32
       headers:
@@ -72,7 +71,7 @@ spec:
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `policy` | required | Rego source, without a `package` line |
-| `opaURL` | `http://127.0.0.1:8181` | OPA API, or `unix:///path/to/opa.sock` |
+| `opaURL` | `unix:///run/opa/opa.sock` | Unix socket of the OPA sidecar; nothing else is accepted |
 | `headers` | none | Request headers copied into the input |
 | `trustedProxies` | none | CIDRs whose `X-Forwarded-For` entries are believed |
 | `issuers` | none | `issuer` and `jwksURI` of each token issuer `data.lib.jwt.claims` accepts |
@@ -142,19 +141,15 @@ opa run --server --addr unix:///run/opa/opa.sock --unix-socket-perm 600 --diagno
 ```
 
 The socket lives in a volume the two containers share, and both run as the same user: only
-Traefik can open it, and nothing Traefik proxies can reach OPA. Each middleware sets
-`opaURL: unix:///run/opa/opa.sock`. `/health` and `/metrics` are served on the diagnostic port.
+Traefik can open it, and nothing Traefik proxies can reach OPA. The socket is the only
+transport: OPA on a TCP port is reachable by anything sharing the pod's network namespace.
+`/health` and `/metrics` are served on the diagnostic port.
 
 `/policies` holds the `opa/` tree of this repository, nothing else. OPA must trust the CA of
 every `jwksURI`.
 
 The OPA version must be the one pinned in `test/go.mod`, since the builtin lists are checked
 against it.
-
-Over TCP (`--addr 127.0.0.1:8181`, the plugin's default `opaURL`) anything sharing the pod's
-loopback reaches OPA: add `--authorization=basic`. `opa/system/authz.rego` then opens only what
-the plugin calls: `PUT /v1/policies/mw/<id>`, `POST /v1/data/mw/<id>`, the sandbox check and
-`GET /health`. It costs 30 to 40% of a decision's round trip and closes `/metrics`.
 
 A removed middleware leaves its policy in the sidecar until it restarts.
 
@@ -206,7 +201,7 @@ deployment:
   additionalVolumes:
     - name: rego-acl
       image:
-        reference: quay.io/hopopops/traefik-rego-acl:v0.4.0
+        reference: quay.io/hopopops/traefik-rego-acl:v0.5.0
         pullPolicy: IfNotPresent
     - name: opa-socket
       emptyDir: {}
@@ -259,7 +254,7 @@ deployment:
 ```
 
 Both containers run as the chart's default user (65532), which `--unix-socket-perm=600`
-relies on. Every middleware then sets `opaURL: unix:///run/opa/opa.sock`. If a `jwksURI` is
+relies on. The socket path is the plugin's default `opaURL`. If a `jwksURI` is
 served under a private CA, mount its bundle into the `opa` container too.
 
 From the [plugin catalog](https://plugins.traefik.io) instead, replace `experimental.localPlugins`
@@ -270,7 +265,7 @@ experimental:
   plugins:
     rego-acl:
       moduleName: github.com/HopopOps/traefik-rego-acl
-      version: v0.4.0
+      version: v0.5.0
 ```
 
 ## Tests
