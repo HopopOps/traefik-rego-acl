@@ -1,3 +1,3 @@
-module code.hopopops.com/kubernetes/traefik-rego-acl
+module github.com/HopopOps/traefik-rego-acl
 
 go 1.22
