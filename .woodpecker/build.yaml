@@ -22,7 +22,7 @@ variables:
       - name: org.opencontainers.image.title
         value: traefik-rego-acl
       - name: org.opencontainers.image.description
-        value: Traefik middleware plugin authorizing requests with per-middleware Rego policies
+        value: Traefik middleware plugin running request policies written entirely in Rego inside the Middleware, evaluated by an OPA sidecar
       - name: org.opencontainers.image.documentation
         value: https://code.hopopops.com/kubernetes/traefik-rego-acl/
 
