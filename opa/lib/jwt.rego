@@ -1,16 +1,16 @@
 package lib.jwt
 
-# claims(token, aud) is the payload of a token signed by an issuer declared in
-# data.lib.config.issuers and issued for aud; undefined otherwise.
+# claims(token, aud) is the payload of a token signed by an issuer of the middleware's
+# issuers list and issued for aud; undefined otherwise.
 #
-# The JWKS URL comes from that configuration only, never from the token or the caller:
-# this function is the one network path policies have.
+# The JWKS URL comes from the middleware configuration only, which the plugin puts in
+# input.issuers, never from the token: this function is the one network path policies have.
 claims(token, aud) := payload if {
 	[_, unverified, _] := io.jwt.decode(token)
-	issuer := data.lib.config.issuers[unverified.iss]
+	jwks_uri := input.issuers[unverified.iss]
 	response := http.send({
 		"method": "GET",
-		"url": issuer.jwks_uri,
+		"url": jwks_uri,
 		"force_cache": true,
 		"force_cache_duration_seconds": 3600,
 		"raise_error": false,

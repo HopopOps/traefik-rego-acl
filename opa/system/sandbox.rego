@@ -33,6 +33,13 @@ violations contains msg if {
 	msg := sprintf("builtin %s is not allowed", [name])
 }
 
+# with replaces data, input or a function, builtins included: `count(x) with count as http.send`
+# calls a denied builtin under an allowed name.
+violations contains "with is not allowed" if {
+	walk(module, [_, node])
+	node["with"]
+}
+
 violations contains "unsupported call expression" if {
 	some op in operators
 	op.type != "ref"
