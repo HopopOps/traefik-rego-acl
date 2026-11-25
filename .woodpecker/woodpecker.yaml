@@ -10,7 +10,7 @@ when:
 
 steps:
   - name: woodpecker:lint
-    image: docker.io/woodpeckerci/woodpecker-cli:v3.20.1-alpine
+    image: docker.io/woodpeckerci/woodpecker-cli:v3.21.0-alpine
     environment:
       WOODPECKER_DISABLE_UPDATE_CHECK: "true"
     commands:
