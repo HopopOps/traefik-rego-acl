@@ -23,7 +23,9 @@ Middleware (policy) -> plugin --validate, push, query--> OPA sidecar (Unix socke
   the next request and loads it again.
 
 The plugin is interpreted by Yaegi and uses the standard library only. OPA itself cannot run
-in Yaegi, which is why it sits in a sidecar.
+in Yaegi, which is why it sits in a sidecar. The manifest asks for Yaegi v2
+(`runtimeVersion: v2`, Traefik 3.8+), which the tests run; earlier Traefik versions ignore the
+key and use Yaegi v1.
 
 Failure modes, all closed:
 
@@ -291,7 +293,7 @@ experimental:
 
 ```
 go test .                 # plugin unit tests
-(cd test && go test .)    # sandbox cases, then the plugin under Yaegi against a real opa server
+(cd test && go test .)    # sandbox cases, then the plugin under Yaegi v2 against a real opa server
 ```
 
 `test/` is a module of its own so that OPA and Yaegi stay out of the plugin's `go.mod`.
