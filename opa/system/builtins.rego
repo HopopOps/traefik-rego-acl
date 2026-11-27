@@ -100,6 +100,7 @@ allowed_builtins := {
 	"json.marshal_with_options",
 	"json.match_schema",
 	"json.patch",
+	"json.pointer_escape",
 	"json.remove",
 	"json.unmarshal",
 	"json.verify_schema",

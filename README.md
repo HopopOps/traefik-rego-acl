@@ -227,7 +227,7 @@ deployment:
   initContainers:
     - name: opa
       # The version pinned in test/go.mod: the builtin allowlist is checked against it.
-      image: docker.io/openpolicyagent/opa:1.22.4-static
+      image: docker.io/openpolicyagent/opa:1.23.0-static
       restartPolicy: Always
       args:
         - run
