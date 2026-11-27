@@ -5,6 +5,13 @@
       "matchManagers": ["gomod"],
       "matchPackageNames": ["github.com/HopopOps/traefik-rego-acl"],
       "enabled": false
+    },
+    {
+      "description": "Traefik runs this plugin on Yaegi v1 (no runtimeVersion in .traefik.yml); the harness must match it.",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/traefik/yaegi"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
     }
   ]
 }
