@@ -3,6 +3,7 @@ package test
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -22,8 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/traefik/yaegi/interp"
-	"github.com/traefik/yaegi/stdlib"
+	"github.com/traefik/yaegi/v2/host"
 )
 
 const policy = `
@@ -47,7 +47,7 @@ reason := "token required" if not input.token
 
 type builder = func(next http.Handler, name, policy, opaURL string, trusted []string, issuers map[string]string) (http.Handler, error)
 
-// plugin loads the middleware the way Traefik does: interpreted by Yaegi from a GOPATH.
+// plugin loads the middleware the way Traefik does for a local plugin: Yaegi v2 from a GOPATH.
 func plugin(t testing.TB) builder {
 	gopath := t.TempDir()
 	dir := filepath.Join(gopath, "src/github.com/HopopOps")
@@ -58,36 +58,47 @@ func plugin(t testing.TB) builder {
 	if err := os.Symlink(root, filepath.Join(dir, "traefik-rego-acl")); err != nil {
 		t.Fatal(err)
 	}
-	i := interp.New(interp.Options{GoPath: gopath})
-	if err := i.Use(stdlib.Symbols); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := i.Eval(`
-import (
-	"context"
-	"net/http"
-
-	acl "github.com/HopopOps/traefik-rego-acl"
-)
-
-func build(next http.Handler, name, policy, opaURL string, trusted []string, issuers map[string]string) (http.Handler, error) {
-	c := acl.CreateConfig()
-	c.Policy = policy
-	c.OPAURL = opaURL
-	c.TrustedProxies = trusted
-	for iss, jwks := range issuers {
-		c.Issuers = append(c.Issuers, acl.Issuer{Issuer: iss, JWKSURI: jwks})
-	}
-	return acl.New(context.Background(), next, c, name)
-}
-`); err != nil {
-		t.Fatal(err)
-	}
-	v, err := i.Eval("build")
+	const module = "github.com/HopopOps/traefik-rego-acl"
+	opts := host.Options()
+	opts.Root = filepath.Join(gopath, "src")
+	opts.Dir = filepath.Join(opts.Root, module)
+	opts.GoPath = gopath
+	opts.Env = os.Environ()
+	p, err := host.LoadContext(context.Background(), opts, module)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return v.Interface().(builder)
+	return func(next http.Handler, name, policy, opaURL string, trusted []string, issuers map[string]string) (http.Handler, error) {
+		res, err := p.Call(context.Background(), "CreateConfig")
+		if err != nil {
+			return nil, err
+		}
+		c := map[string]any{"policy": policy, "opaURL": opaURL, "trustedProxies": trusted}
+		var iss []map[string]string
+		for i, j := range issuers {
+			iss = append(iss, map[string]string{"issuer": i, "jwksURI": j})
+		}
+		c["issuers"] = iss
+		raw, _ := json.Marshal(c)
+		if err := res[0].Decode(func(ptr any) error { return json.Unmarshal(raw, ptr) }); err != nil {
+			return nil, err
+		}
+		ctx := context.Background()
+		res, err = p.Call(ctx, "New", ctx, next, res[0], name)
+		if err != nil {
+			return nil, err
+		}
+		if e, err := res[1].Interface(); err != nil {
+			return nil, err
+		} else if e != nil {
+			return nil, e.(error)
+		}
+		h, err := res[0].Interface()
+		if err != nil {
+			return nil, err
+		}
+		return h.(http.Handler), nil
+	}
 }
 
 func opaBinary(t testing.TB) string {

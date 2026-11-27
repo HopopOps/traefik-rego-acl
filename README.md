@@ -23,7 +23,9 @@ Middleware (policy) -> plugin --validate, push, query--> OPA sidecar (Unix socke
   the next request and loads it again.
 
 The plugin is interpreted by Yaegi and uses the standard library only. OPA itself cannot run
-in Yaegi, which is why it sits in a sidecar.
+in Yaegi, which is why it sits in a sidecar. The manifest asks for Yaegi v2
+(`runtimeVersion: v2`, Traefik 3.8+), which the tests run; earlier Traefik versions ignore the
+key and use Yaegi v1.
 
 Failure modes, all closed:
 
@@ -220,14 +222,14 @@ deployment:
   additionalVolumes:
     - name: rego-acl
       image:
-        reference: quay.io/hopopops/traefik-rego-acl:v0.5.0
+        reference: quay.io/hopopops/traefik-rego-acl:v0.6.0
         pullPolicy: IfNotPresent
     - name: opa-socket
       emptyDir: {}
   initContainers:
     - name: opa
       # The version pinned in test/go.mod: the builtin allowlist is checked against it.
-      image: docker.io/openpolicyagent/opa:1.22.4-static
+      image: docker.io/openpolicyagent/opa:1.23.0-static
       restartPolicy: Always
       args:
         - run
@@ -284,14 +286,14 @@ experimental:
   plugins:
     rego-acl:
       moduleName: github.com/HopopOps/traefik-rego-acl
-      version: v0.5.0
+      version: v0.6.0
 ```
 
 ## Tests
 
 ```
 go test .                 # plugin unit tests
-(cd test && go test .)    # sandbox cases, then the plugin under Yaegi against a real opa server
+(cd test && go test .)    # sandbox cases, then the plugin under Yaegi v2 against a real opa server
 ```
 
 `test/` is a module of its own so that OPA and Yaegi stay out of the plugin's `go.mod`.
