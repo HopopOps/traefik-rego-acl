@@ -222,7 +222,7 @@ deployment:
   additionalVolumes:
     - name: rego-acl
       image:
-        reference: quay.io/hopopops/traefik-rego-acl:v0.5.0
+        reference: quay.io/hopopops/traefik-rego-acl:v0.6.0
         pullPolicy: IfNotPresent
     - name: opa-socket
       emptyDir: {}
@@ -286,7 +286,7 @@ experimental:
   plugins:
     rego-acl:
       moduleName: github.com/HopopOps/traefik-rego-acl
-      version: v0.5.0
+      version: v0.6.0
 ```
 
 ## Tests
